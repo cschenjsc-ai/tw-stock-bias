@@ -1,0 +1,127 @@
+Python
+import os
+import json
+import time
+from datetime import datetime, timedelta
+import requests
+import pandas as pd
+
+# 監控的股票清單 (您可以隨時在這裡新增或修改股票)
+STOCKS_TO_WATCH = [
+    {"code": "2330", "name": "台積電", "category": "晶圓代工"},
+    {"code": "2303", "name": "聯電", "category": "晶圓代工"},
+    {"code": "2454", "name": "聯發科", "category": "IC設計"},
+    {"code": "2317", "name": "鴻海", "category": "組裝代工"},
+    {"code": "2382", "name": "廣達", "category": "AI伺服器/組裝"},
+    {"code": "3231", "name": "緯創", "category": "AI伺服器/組裝"},
+    {"code": "3008", "name": "大立光", "category": "光學鏡頭"},
+    {"code": "2603", "name": "長榮", "category": "貨櫃航運"},
+    {"code": "2881", "name": "富邦金", "category": "金融金控"},
+    {"code": "2882", "name": "國泰金", "category": "金融金控"},
+]
+
+def fetch_stock_history(code):
+    """從證交所/櫃買 API 抓取近 90 天歷史 K 線 (確保算滿 60 日均線)"""
+    today = datetime.now()
+    all_rows = []
+    
+    # 往前抓 4 個月份的資料以湊滿 60 個交易日
+    for i in range(4):
+        target_date = today - timedelta(days=i*28)
+        date_str = target_date.strftime("%Y%m01")
+        
+        # 1. 嘗試上市 (TWSE) API
+        url_twse = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={date_str}&stockNo={code}&response=json"
+        try:
+            res = requests.get(url_twse, timeout=10).json()
+            if res.get("stat") == "OK" and "data" in res:
+                all_rows.extend(res["data"])
+                time.sleep(0.3)
+                continue
+        except Exception:
+            pass
+
+        # 2. 嘗試上櫃 (TPEx) API
+        roc_year = target_date.year - 1911
+        roc_date_str = f"{roc_year}/{target_date.strftime('%m')}"
+        url_tpex = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&d={roc_date_str}&stkno={code}"
+        try:
+            res = requests.get(url_tpex, timeout=10).json()
+            if "aaData" in res and res["aaData"]:
+                all_rows.extend(res["aaData"])
+                time.sleep(0.3)
+        except Exception:
+            pass
+
+    if not all_rows:
+        return None
+
+    # 解析資料並轉為 Pandas DataFrame
+    parsed_data = []
+    for row in all_rows:
+        try:
+            date_part = row[0]
+            close_price = float(str(row[6]).replace(',', ''))
+            parsed_data.append({"date": date_part, "close": close_price})
+        except (ValueError, IndexError):
+            continue
+
+    df = pd.DataFrame(parsed_data).drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
+    return df
+
+def calculate_indicators():
+    results = []
+    print("開始抓取與計算台股真實股價與乖離率...")
+
+    for item in STOCKS_TO_WATCH:
+        code = item["code"]
+        print(f"正在處理: {code} {item['name']}...")
+        df = fetch_stock_history(code)
+        
+        if df is None or len(df) < 60:
+            print(f"  [警告] {code} 歷史資料不足 60 日，跳過。")
+            continue
+
+        # 計算移動平均線 (MA)
+        df['ma5'] = df['close'].rolling(5).mean()
+        df['ma20'] = df['close'].rolling(20).mean()
+        df['ma60'] = df['close'].rolling(60).mean()
+
+        # 取最新一天資料
+        latest = df.iloc[-1]
+        close = float(latest['close'])
+        ma5 = float(latest['ma5'])
+        ma20 = float(latest['ma20'])
+        ma60 = float(latest['ma60'])
+
+        # 計算乖離率: (收盤價 - MA) / MA * 100
+        bias5 = round(((close - ma5) / ma5) * 100, 2)
+        bias20 = round(((close - ma20) / ma20) * 100, 2)
+        bias60 = round(((close - ma60) / ma60) * 100, 2)
+
+        results.append({
+            "code": code,
+            "name": item["name"],
+            "category": item["category"],
+            "close": round(close, 2),
+            "ma5": round(ma5, 2),
+            "bias5": bias5,
+            "ma20": round(ma20, 2),
+            "bias20": bias20,
+            "ma60": round(ma60, 2),
+            "bias60": bias60
+        })
+
+    # 產出 JSON 檔案供 HTML 網頁讀取
+    output_data = {
+        "lastUpdated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "stocks": results
+    }
+    
+    with open("stocks.json", "w", encoding="utf-8") as f:
+        json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+    print("計算完成！資料已儲存至 stocks.json")
+
+if __name__ == "__main__":
+    calculate_indicators()

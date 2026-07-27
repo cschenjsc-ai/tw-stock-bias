@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>臺股上市櫃每日乖離率與均線排行榜 (200檔焦點股)</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
+  <!-- FontAwesome 圖標 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    /* 避免 Vue 掛載完成前顯示未編譯的樣板語法 */
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+  <div id="app" v-cloak class="max-w-7xl mx-auto p-4 md:p-8">
+    
+    <!-- 頁頭 -->
+    <header class="mb-8 border-b border-slate-700 pb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-bold text-emerald-400">
+          <i class="fa-solid me-2 fa-chart-line"></i>臺股每日均線乖離率排行榜
+        </h1>
+        <p class="text-xs text-slate-400 mt-1">更新時間：{{ lastUpdated }} (上市櫃精選 200 檔個股監控中)</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <input 
+          type="text" 
+          v-model="searchKeyword" 
+          placeholder="搜尋代號或股票名稱..." 
+          class="bg-slate-800 text-sm border border-slate-700 rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-400 text-slate-200 placeholder-slate-500 w-48 md:w-64"
+        />
+        <div class="text-xs bg-slate-800 border border-slate-700 px-3 py-2 rounded-lg text-slate-300">
+          共 {{ filteredList.length }} 檔
+        </div>
+      </div>
+    </header>
+
+    <!-- 三個均線切換 Icon 按鈕 -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      <button 
+        @click="activeMa = 5" 
+        :class="['p-4 rounded-xl border transition-all flex flex-col items-center justify-center gap-2 cursor-pointer', 
+                 activeMa === 5 ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400 shadow-lg shadow-indigo-500/10' : 'bg-slate-800 border-slate-700 hover:border-slate-500 text-slate-400']">
+        <i class="fa-solid fa-bolt text-2xl"></i>
+        <span class="font-bold text-lg">5 日線 (週線)</span>
+        <span class="text-xs text-slate-400">極短線強弱飆股</span>
+      </button>
+
+      <button 
+        @click="activeMa = 20" 
+        :class="['p-4 rounded-xl border transition-all flex flex-col items-center justify-center gap-2 cursor-pointer', 
+                 activeMa === 20 ? 'bg-amber-600/20 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/10' : 'bg-slate-800 border-slate-700 hover:border-slate-500 text-slate-400']">
+        <i class="fa-solid fa-fire text-2xl"></i>
+        <span class="font-bold text-lg">20 日線 (月線)</span>
+        <span class="text-xs text-slate-400">短線波段趨勢</span>
+      </button>
+
+      <button 
+        @click="activeMa = 60" 
+        :class="['p-4 rounded-xl border transition-all flex flex-col items-center justify-center gap-2 cursor-pointer', 
+                 activeMa === 60 ? 'bg-emerald-600/20 border-emerald-500 text-emerald-400 shadow-lg shadow-emerald-500/10' : 'bg-slate-800 border-slate-700 hover:border-slate-500 text-slate-400']">
+        <i class="fa-solid fa-layer-group text-2xl"></i>
+        <span class="font-bold text-lg">60 日線 (季線)</span>
+        <span class="text-xs text-slate-400">中線趨勢與產業分類</span>
+      </button>
+    </div>
+
+    <!-- 檢視模式切換 -->
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-xl font-bold text-slate-200">
+        {{ activeMa }} 日線 - 乖離率排行榜
+      </h2>
+      <div class="flex gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700">
+        <button 
+          @click="viewMode = 'list'"
+          :class="['px-3 py-1.5 text-xs rounded-md transition-colors', viewMode === 'list' ? 'bg-slate-700 text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200']">
+          <i class="fa-solid fa-list me-1"></i>總排行榜
+        </button>
+        <button 
+          @click="viewMode = 'category'"
+          :class="['px-3 py-1.5 text-xs rounded-md transition-colors', viewMode === 'category' ? 'bg-slate-700 text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200']">
+          <i class="fa-solid fa-sitemap me-1"></i>同類股群組
+        </button>
+      </div>
+    </div>
+
+    <!-- 視圖 A：標準表格清單 -->
+    <div v-if="viewMode === 'list'" class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-xl">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm text-slate-300">
+          <thead class="bg-slate-900/50 text-xs text-slate-400 uppercase border-b border-slate-700">
+            <tr>
+              <th class="px-4 py-3">總名次</th>
+              <th class="px-4 py-3">代號/名稱</th>
+              <th class="px-4 py-3">產業類別</th>
+              <th class="px-4 py-3 text-right">今日收盤價</th>
+              <th class="px-4 py-3 text-right">{{ activeMa }}日均價</th>
+              <th class="px-4 py-3 text-right">{{ activeMa }}日乖離率</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-700/50">
+            <tr v-for="(stock, index) in filteredList" :key="stock.code" class="hover:bg-slate-700/30 transition-colors">
+              <td class="px-4 py-3 font-mono text-slate-400">#{{ stock.globalRank }}</td>
+              <td class="px-4 py-3 font-semibold text-slate-100">
+                <span class="text-xs text-slate-400 font-normal me-1">({{ stock.code }})</span>
+                {{ stock.name }}
+              </td>
+              <td class="px-4 py-3 text-xs text-slate-400">
+                <span class="bg-slate-700 px-2 py-0.5 rounded text-emerald-300">{{ stock.category }}</span>
+              </td>
+              <td class="px-4 py-3 text-right font-mono text-emerald-400 font-bold">${{ stock.close.toFixed(2) }}</td>
+              <td class="px-4 py-3 text-right font-mono text-slate-300">${{ stock['ma' + activeMa] }}</td>
+              <td class="px-4 py-3 text-right font-mono font-bold" :class="stock['bias' + activeMa] >= 0 ? 'text-red-400' : 'text-green-400'">
+                {{ stock['bias' + activeMa] > 0 ? '+' : '' }}{{ stock['bias' + activeMa] }}%
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 視圖 B：同類股分類卡片 -->
+    <div v-else class="space-y-6">
+      <div v-for="(stocks, category) in groupedFilteredStocks" :key="category" class="bg-slate-800 rounded-xl border border-slate-700 p-5">
+        <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4">
+          <h3 class="font-bold text-lg text-emerald-400 flex items-center gap-2">
+            <i class="fa-solid fa-folder"></i> {{ category }}
+            <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full font-normal">
+              {{ stocks.length }} 檔上榜
+            </span>
+          </h3>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div v-for="(stock, catIndex) in stocks" :key="stock.code" class="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50 flex justify-between items-center">
+            <div>
+              <div class="flex items-center gap-1.5 mb-1">
+                <span class="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                  類股 #{{ catIndex + 1 }}
+                </span>
+                <span class="text-[10px] text-slate-400 font-mono">
+                  (總名次 #{{ stock.globalRank }})
+                </span>
+              </div>
+              <div class="font-bold text-slate-200">{{ stock.name }} <span class="text-xs font-normal text-slate-400">({{ stock.code }})</span></div>
+              <div class="text-xs text-slate-400">收盤: <span class="text-slate-200">${{ stock.close.toFixed(2) }}</span></div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-slate-400">{{ activeMa }}D 乖離率</div>
+              <div class="font-mono font-bold" :class="stock['bias' + activeMa] >= 0 ? 'text-red-400' : 'text-green-400'">
+                {{ stock['bias' + activeMa] > 0 ? '+' : '' }}{{ stock['bias' + activeMa] }}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  
+<script>
+  const { createApp, ref, computed, onMounted } = Vue;
+
+  createApp({
+    setup() {
+      const activeMa = ref(60);
+      const viewMode = ref('category');
+      const searchKeyword = ref('');
+      const lastUpdated = ref('資料載入中...');
+      const stockList = ref([]);
+      const isLoading = ref(true);
+
+      // 網頁開啟時，自動讀取 stocks.json 資料
+      onMounted(async () => {
+        try {
+          const response = await fetch('./stocks.json');
+          if (!response.ok) throw new Error('無法讀取股票資料');
+          const data = await response.json();
+          
+          lastUpdated.value = data.lastUpdated;
+          stockList.value = data.stocks;
+        } catch (error) {
+          console.error('讀取失敗:', error);
+          lastUpdated.value = '資料載入失敗（請確認 stocks.json 是否存在）';
+        } finally {
+          isLoading.value = false;
+        }
+      });
+
+      // 依選定的 MA 乖離率排序
+      const sortedList = computed(() => {
+        const sorted = [...stockList.value].sort((a, b) => 
+          parseFloat(b[`bias${activeMa.value}`]) - parseFloat(a[`bias${activeMa.value}`])
+        );
+        return sorted.map((stock, idx) => ({
+          ...stock,
+          globalRank: idx + 1
+        }));
+      });
+
+      // 搜尋關鍵字過濾
+      const filteredList = computed(() => {
+        if (!searchKeyword.value.trim()) return sortedList.value;
+        const kw = searchKeyword.value.trim().toLowerCase();
+        return sortedList.value.filter(s => 
+          s.code.toLowerCase().includes(kw) || 
+          s.name.toLowerCase().includes(kw) || 
+          s.category.toLowerCase().includes(kw)
+        );
+      });
+
+      // 依產業分類群組化
+      const groupedFilteredStocks = computed(() => {
+        return filteredList.value.reduce((acc, stock) => {
+          if (!acc[stock.category]) acc[stock.category] = [];
+          acc[stock.category].push(stock);
+          return acc;
+        }, {});
+      });
+
+      return { 
+        activeMa, 
+        viewMode, 
+        searchKeyword, 
+        lastUpdated, 
+        filteredList, 
+        groupedFilteredStocks,
+        isLoading
+      };
+    }
+  }).mount('#app');
+</script>
+  </body>
+</html>
