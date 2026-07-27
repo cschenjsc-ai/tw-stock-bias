@@ -2,9 +2,9 @@ YAML
 name: 自動更新台股每日乖離率
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 8 * * 1-5'
-  workflow_dispatch:
 
 jobs:
   update-stock-data:
